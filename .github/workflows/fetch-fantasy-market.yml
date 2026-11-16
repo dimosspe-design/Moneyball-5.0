@@ -28,58 +28,76 @@ jobs:
         run: |
           python fetch_fantasy_market.py
 
-      - name: Validate extracted market
+      - name: Validate players and coaches
         run: |
           python - <<'PY'
           import csv
           import json
+          import math
           from pathlib import Path
 
-          csv_path = Path("results/public_market_snapshot.csv")
-          report_path = Path("results/public_market_report.json")
+          results = Path("results")
 
-          assert csv_path.exists(), "Market CSV missing"
+          players_path = results / "public_market_snapshot.csv"
+          coaches_path = results / "public_coaches_snapshot.csv"
+          report_path = results / "public_market_report.json"
+
+          def read_csv(path):
+              assert path.exists(), f"Missing file: {path}"
+              with path.open(newline="", encoding="utf-8-sig") as f:
+                  return list(csv.DictReader(f))
+
+          players = read_csv(players_path)
+          coaches = read_csv(coaches_path)
+
           assert report_path.exists(), "Market report missing"
+          report = json.loads(report_path.read_text(encoding="utf-8"))
 
-          with csv_path.open(
-              newline="", encoding="utf-8-sig"
-          ) as f:
-              rows = list(csv.DictReader(f))
+          assert players, "No players extracted"
+          assert coaches, "No coaches extracted"
 
-          report = json.loads(
-              report_path.read_text(encoding="utf-8")
-          )
-
-          assert rows, "No players extracted"
-          assert len(rows) == report["players_extracted"]
-
-          names = [
-              row["player"].strip().casefold()
-              for row in rows
-          ]
-
-          assert len(names) == len(set(names)), (
-              "Duplicate player names found"
-          )
+          assert len(players) == report["players_extracted"]
+          assert len(coaches) == report["coaches_extracted"]
 
           assert all(
               row["position"] in {"G", "F", "C"}
-              for row in rows
+              for row in players
           ), "Invalid player position"
 
           assert all(
-              float(row["credit"]) > 0
-              for row in rows
-          ), "Invalid player price"
+              row["position"] == "HC"
+              for row in coaches
+          ), "Invalid coach position"
 
-          print("Players extracted:", len(rows))
-          print("Issues:", len(report["issues"]))
+          for row in players + coaches:
+              price = float(row["credit"])
+              assert math.isfinite(price) and price > 0, (
+                  f"Invalid price: {row['player']}"
+              )
+
+          keys = [
+              (row["player"].strip().casefold(),
+               row["team"].strip().casefold())
+              for row in players + coaches
+          ]
+
+          assert len(keys) == len(set(keys)), (
+              "Duplicate market entries"
+          )
+
+          print("Players extracted:", len(players))
+          print("Coaches extracted:", len(coaches))
+          print("Extraction issues:", len(report["issues"]))
           print(
               "Official market verified:",
               report["official_fantasy_market_verified"]
           )
+          print(
+              "Coach projections available:",
+              report["coach_projections_available"]
+          )
 
-          print("SUCCESS: Public market CSV validated")
+          print("SUCCESS: Player and coach market validated")
           print("NO TRANSFERS EXECUTED")
           PY
 
@@ -87,9 +105,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: moneyball-public-market-snapshot
+          name: moneyball-public-market-with-coaches
           path: |
             results/public_market_snapshot.csv
+            results/public_coaches_snapshot.csv
             results/public_market_report.json
           retention-days: 14
           if-no-files-found: warn
