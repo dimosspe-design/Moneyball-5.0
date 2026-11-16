@@ -29,12 +29,12 @@ jobs:
       - name: Check data availability
         run: |
           if [ ! -f euroleague.zip ]; then
-            echo "ERROR: Missing data/euroleague.zip"
+            echo "ERROR: Missing euroleague.zip"
             exit 1
           fi
 
       - name: Run Moneyball 5.0
-        run: python weekly.py --data data/euroleague.zip --roster roster.csv --out results
+        run: python weekly.py --data euroleague.zip --roster roster.csv --out results
 
       - name: Upload results
         if: always()
