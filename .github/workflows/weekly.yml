@@ -28,7 +28,7 @@ jobs:
 
       - name: Check data availability
         run: |
-          if [ ! -f data/euroleague.zip ]; then
+          if [ ! -f euroleague.zip ]; then
             echo "ERROR: Missing data/euroleague.zip"
             exit 1
           fi
