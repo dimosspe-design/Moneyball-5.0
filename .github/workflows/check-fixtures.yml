@@ -1,1 +1,39 @@
+name: Moneyball 5.0 - Check Fixtures
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check required files
+        run: |
+          test -f euroleague.zip
+          test -f fixtures.csv
+          test -f check_fixtures.py
+
+      - name: Validate fixtures
+        run: python check_fixtures.py
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixtures-validation
+          path: results/fixtures_validation.json
+          if-no-files-found: warn
 
