@@ -1,12 +1,11 @@
 """
-Moneyball 5.0 — Public Market Source Diagnostic
+Moneyball 5.0 — Market HTML Structure Diagnostic
 
-Checks whether Fantasy Edge IQ exposes player data
-in its public HTML response.
+Inspects the public HTML structure of Fantasy Edge IQ.
 
-No login.
-No transfers.
-No changes to verified market data.
+Does not scrape authenticated pages.
+Does not change Fantasy prices.
+Does not execute transfers.
 """
 
 import json
@@ -15,11 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from bs4 import BeautifulSoup
 
 
 URL = "https://www.fantasyedgeiq.com/euroleague/players"
-
-OUTPUT = Path("results/market_source_diagnostic.json")
+OUTPUT = Path("results/market_structure_diagnostic.json")
 
 
 def main():
@@ -27,13 +26,15 @@ def main():
 
     report = {
         "source": "Fantasy Edge IQ",
-        "url": URL,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "http_status": None,
-        "html_length": 0,
-        "player_name_found": False,
-        "credit_value_found": False,
-        "automatic_extraction_ready": False,
+        "html_tables": 0,
+        "table_headers": [],
+        "player_name_occurrences": 0,
+        "player_context_samples": [],
+        "embedded_json_scripts": 0,
+        "potential_player_rows": 0,
+        "extraction_verified": False,
         "error": None,
     }
 
@@ -45,29 +46,50 @@ def main():
                 "User-Agent": "Moneyball5-SourceDiagnostic/1.0"
             },
         )
-
         report["http_status"] = response.status_code
-        report["html_length"] = len(response.text)
-
         response.raise_for_status()
 
-        html = response.text
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        report["player_name_found"] = bool(
-            re.search(
+        tables = soup.find_all("table")
+        report["html_tables"] = len(tables)
+
+        for table in tables[:5]:
+            headers = [
+                th.get_text(" ", strip=True)
+                for th in table.find_all("th")
+            ]
+            report["table_headers"].append(headers)
+
+        scripts = soup.find_all(
+            "script",
+            type=re.compile(r"json", re.IGNORECASE),
+        )
+        report["embedded_json_scripts"] = len(scripts)
+
+        text = soup.get_text(" ", strip=True)
+
+        matches = list(
+            re.finditer(
                 r"Elijah\s+Bryant|Bryant\s+Elijah",
-                html,
+                text,
                 flags=re.IGNORECASE,
             )
         )
 
-        report["credit_value_found"] = bool(
-            re.search(r"17[.,]6", html)
-        )
+        report["player_name_occurrences"] = len(matches)
 
-        report["automatic_extraction_ready"] = (
-            report["player_name_found"]
-            and report["credit_value_found"]
+        for match in matches[:3]:
+            start = max(0, match.start() - 100)
+            end = min(len(text), match.end() + 200)
+
+            report["player_context_samples"].append(
+                text[start:end]
+            )
+
+        report["potential_player_rows"] = sum(
+            len(table.find_all("tr"))
+            for table in tables
         )
 
     except requests.RequestException as exc:
@@ -79,26 +101,6 @@ def main():
     )
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
-
-    if report["automatic_extraction_ready"]:
-        print(
-            "\nSUCCESS: Player name and reference price "
-            "are visible in the HTML response."
-        )
-        print(
-            "NOTE: This does not yet prove that a complete "
-            "market table can be extracted."
-        )
-    else:
-        print(
-            "\nCHECK REQUIRED: Reference player/price "
-            "not found together in the HTML response."
-        )
-        print(
-            "The page may use JavaScript or another "
-            "data-loading mechanism."
-        )
-
     print("\nNO TRANSFERS EXECUTED")
 
 
