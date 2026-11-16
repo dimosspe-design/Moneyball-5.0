@@ -1,0 +1,11 @@
+player,credit,position,turn,slot,expected_fantasy_if_play,floor_p10_approx,upside_p90_approx,p15,p20,p25,expected_per_credit_if_play,p_beat_1p1_credit_if_play,availability
+Jonas Valanciunas,17.7,C,T1,captain,18.84,9.54,29.19,0.751,0.551,0.396,1.06,not backtested,unverified
+Aliou Diarra,10.8,C,T1,starter,14.18,4.88,24.53,0.481,0.245,0.123,1.31,not backtested,unverified
+Collin Malcolm,10.3,F,T1,starter,14.89,5.6,25.24,0.526,0.285,0.151,1.45,not backtested,unverified
+Armoni Brooks,11.3,G,T1,starter,12.03,2.74,22.38,0.349,0.15,0.065,1.06,not backtested,unverified
+Cameron Payne,10.2,G,T1,starter,12.77,3.48,23.12,0.393,0.179,0.081,1.25,not backtested,unverified
+Tyson Ward,8.2,F,T1,sixth,11.82,2.53,22.17,0.337,0.142,0.061,1.44,not backtested,unverified
+Andres Feliz,9.7,G,T2,bench,14.93,5.64,25.28,0.528,0.287,0.153,1.54,not backtested,unverified
+Alberto Abalde,6.1,F,T2,bench,11.56,2.27,21.91,0.323,0.133,0.056,1.9,not backtested,unverified
+Sebastian Herrera,6.3,G,T1,bench,10.25,0.96,20.6,0.255,0.096,0.037,1.63,not backtested,unverified
+Eleftherios Mantzoukas,4.4,F,T1,bench,7.34,-1.96,17.68,0.14,0.044,0.015,1.67,not backtested,unverified
