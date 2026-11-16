@@ -112,6 +112,7 @@ def load_fixtures():
         "Real Madrid": "RMB",
         "Partizan": "PBB",
         "Valencia": "VBC",
+        "Valencia Basket": "VBC",
         "Besiktas": "BJK",
     }
 
