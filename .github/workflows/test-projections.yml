@@ -1,1 +1,73 @@
+name: Moneyball 5.0 - Test R12 Projections
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-projections:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check required files
+        run: |
+          test -f euroleague.zip
+          test -f fixtures.csv
+          test -f model.py
+
+      - name: Run R12 projections
+        run: |
+          python model.py \
+            --data euroleague.zip \
+            --out results
+
+      - name: Validate projection output
+        run: |
+          python - <<'PY'
+          import pandas as pd
+
+          df = pd.read_csv("results/conditional_projections.csv")
+
+          assert not df.empty, "No projections generated"
+          assert "opponent" in df.columns
+          assert "venue" in df.columns
+
+          missing = df[
+              df["opponent"].isna()
+              | (df["opponent"].astype(str).str.strip() == "")
+          ]
+
+          print("Total player projections:", len(df))
+          print("Players without opponent:", len(missing))
+          print("Opponent codes:", sorted(df["opponent"].dropna().unique().tolist()))
+          print("Venue values:", sorted(df["venue"].dropna().unique().tolist()))
+
+          if not missing.empty:
+              print(missing[["player", "team", "opponent"]].head(20))
+              raise SystemExit("ERROR: Some players have no opponent")
+
+          print("SUCCESS: All projected players have an opponent")
+          PY
+
+      - name: Upload projection results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-r12-projections
+          path: results/
+          if-no-files-found: warn
