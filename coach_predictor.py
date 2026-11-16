@@ -92,6 +92,31 @@ def load_fixtures():
     if not FIXTURES.exists():
         raise FileNotFoundError(FIXTURES)
 
+    aliases = {
+        "Dubai Basketball": "DUB",
+        "Anadolu Efes": "EFS",
+        "Maccabi Tel Aviv": "MTA",
+        "Olympiacos": "OLY",
+        "Zalgiris Kaunas": "ZAL",
+        "Bayern Munich": "BAY",
+        "Fenerbahce": "FBT",
+        "ASVEL": "ASV",
+        "Baskonia": "KBA",
+        "Hapoel Tel Aviv": "HTA",
+        "Olimpia Milano": "MIL",
+        "Crvena Zvezda": "CZV",
+        "Barcelona": "BAR",
+        "Paris Basketball": "PAR",
+        "Panathinaikos": "PAO",
+        "Virtus Bologna": "VIR",
+        "Real Madrid": "RMB",
+        "Partizan": "PBB",
+        "Valencia": "VBC",
+        "Besiktas": "BJK",
+    }
+
+    fixtures = []
+
     with FIXTURES.open(
         newline="",
         encoding="utf-8-sig",
@@ -100,22 +125,35 @@ def load_fixtures():
 
         headers = set(reader.fieldnames or [])
 
-        if not {"home", "away"}.issubset(headers):
+        required = {"home_team", "away_team"}
+
+        if not required.issubset(headers):
             raise ValueError(
-                "fixtures.csv must contain home and away columns"
+                "fixtures.csv must contain "
+                "home_team and away_team columns"
             )
 
-        fixtures = []
-
         for row in reader:
-            home = row["home"].strip().upper()
-            away = row["away"].strip().upper()
+            home_name = row["home_team"].strip()
+            away_name = row["away_team"].strip()
 
-            if home and away:
-                fixtures.append({
-                    "home": home,
-                    "away": away,
-                })
+            if not home_name or not away_name:
+                continue
+
+            if home_name not in aliases:
+                raise ValueError(
+                    f"Unknown home team: {home_name}"
+                )
+
+            if away_name not in aliases:
+                raise ValueError(
+                    f"Unknown away team: {away_name}"
+                )
+
+            fixtures.append({
+                "home": aliases[home_name],
+                "away": aliases[away_name],
+            })
 
     if len(fixtures) != 10:
         raise ValueError(
