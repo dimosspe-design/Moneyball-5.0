@@ -1,1 +1,95 @@
+name: Moneyball 5.0 - Fetch Fantasy Market
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install requests beautifulsoup4
+
+      - name: Fetch public Fantasy market
+        run: |
+          python fetch_fantasy_market.py
+
+      - name: Validate extracted market
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          csv_path = Path("results/public_market_snapshot.csv")
+          report_path = Path("results/public_market_report.json")
+
+          assert csv_path.exists(), "Market CSV missing"
+          assert report_path.exists(), "Market report missing"
+
+          with csv_path.open(
+              newline="", encoding="utf-8-sig"
+          ) as f:
+              rows = list(csv.DictReader(f))
+
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
+
+          assert rows, "No players extracted"
+          assert len(rows) == report["players_extracted"]
+
+          names = [
+              row["player"].strip().casefold()
+              for row in rows
+          ]
+
+          assert len(names) == len(set(names)), (
+              "Duplicate player names found"
+          )
+
+          assert all(
+              row["position"] in {"G", "F", "C"}
+              for row in rows
+          ), "Invalid player position"
+
+          assert all(
+              float(row["credit"]) > 0
+              for row in rows
+          ), "Invalid player price"
+
+          print("Players extracted:", len(rows))
+          print("Issues:", len(report["issues"]))
+          print(
+              "Official market verified:",
+              report["official_fantasy_market_verified"]
+          )
+
+          print("SUCCESS: Public market CSV validated")
+          print("NO TRANSFERS EXECUTED")
+          PY
+
+      - name: Upload market snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-public-market-snapshot
+          path: |
+            results/public_market_snapshot.csv
+            results/public_market_report.json
+          retention-days: 14
+          if-no-files-found: warn
