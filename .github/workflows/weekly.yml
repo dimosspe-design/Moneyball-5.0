@@ -1,21 +1,28 @@
-name: Moneyball 5.0 weekly research
+name: Moneyball 5.0 - Matchday Data Update
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 7 * * 1'
+    - cron: '0 6 * * *'
+    - cron: '0 16 * * *'
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: moneyball-data-refresh
+  cancel-in-progress: false
 
 jobs:
-  weekly:
+  refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,20 +33,174 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check data availability
+      - name: Download latest EuroLeague data
         run: |
-          if [ ! -f euroleague.zip ]; then
-            echo "ERROR: Missing euroleague.zip"
-            exit 1
-          fi
+          curl --fail --location --retry 3 \
+            --connect-timeout 15 \
+            --max-time 120 \
+            --output latest-euroleague.zip \
+            https://675hoops.com/downloads/euroleague-2026.zip
+
+      - name: Validate data and detect new games
+        id: check
+        shell: python
+        run: |
+          import csv
+          import gzip
+          import io
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          REQUIRED = {
+              "games-2026.csv.gz",
+              "team_games-2026.csv.gz",
+              "player_box-2026.csv.gz",
+              "shots-2026.csv.gz",
+          }
+
+          def inspect(path):
+              with zipfile.ZipFile(path) as archive:
+                  names = set(archive.namelist())
+                  missing = REQUIRED - names
+
+                  if missing:
+                      raise ValueError(
+                          f"Missing datasets: {sorted(missing)}"
+                      )
+
+                  counts = {}
+
+                  for name in sorted(REQUIRED):
+                      data = gzip.decompress(
+                          archive.read(name)
+                      )
+
+                      reader = csv.DictReader(
+                          io.StringIO(
+                              data.decode("utf-8-sig")
+                          )
+                      )
+
+                      counts[name] = sum(
+                          1 for _ in reader
+                      )
+
+                  return counts
+
+          latest = inspect("latest-euroleague.zip")
+          latest_games = latest["games-2026.csv.gz"]
+
+          state_file = Path(
+              "state/last_processed.json"
+          )
+
+          if state_file.exists():
+              state = json.loads(
+                  state_file.read_text()
+              )
+
+              previous_games = int(
+                  state["games"]
+              )
+          else:
+              previous = inspect("euroleague.zip")
+              previous_games = previous[
+                  "games-2026.csv.gz"
+              ]
+
+          print(f"Previous games: {previous_games}")
+          print(f"Latest games: {latest_games}")
+
+          if latest_games < previous_games:
+              raise ValueError(
+                  "Latest dataset contains fewer games."
+              )
+
+          has_new_games = (
+              latest_games > previous_games
+          )
+
+          if has_new_games:
+              print("RESULT: NEW GAMES AVAILABLE")
+          else:
+              print("RESULT: NO NEW GAMES")
+
+          with open(
+              os.environ["GITHUB_OUTPUT"], "a"
+          ) as output:
+              print(
+                  f"new_games={str(has_new_games).lower()}",
+                  file=output
+              )
+              print(
+                  f"latest_games={latest_games}",
+                  file=output
+              )
 
       - name: Run Moneyball 5.0
-        run: python weekly.py --data euroleague.zip --roster roster.csv --out results
+        if: steps.check.outputs.new_games == 'true'
+        run: |
+          python weekly.py \
+            --data latest-euroleague.zip \
+            --roster roster.csv \
+            --out results
+
+      - name: Save processed game count
+        if: steps.check.outputs.new_games == 'true'
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          games = int(
+              os.environ["LATEST_GAMES"]
+          )
+
+          state_file = Path(
+              "state/last_processed.json"
+          )
+
+          state_file.parent.mkdir(
+              parents=True,
+              exist_ok=True
+          )
+
+          state_file.write_text(
+              json.dumps(
+                  {"games": games},
+                  indent=2
+              ) + "\n"
+          )
+        env:
+          LATEST_GAMES: ${{ steps.check.outputs.latest_games }}
+
+      - name: Commit updated state
+        if: steps.check.outputs.new_games == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add state/last_processed.json
+
+          git commit -m \
+            "Update Moneyball processed game count"
+
+          git push
 
       - name: Upload results
-        if: always()
+        if: steps.check.outputs.new_games == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: moneyball-results
+          name: moneyball-results-${{ github.run_number }}
           path: results/
-          if-no-files-found: warn
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Report status
+        run: |
+          echo "New games: ${{ steps.check.outputs.new_games }}"
+          echo "Latest games: ${{ steps.check.outputs.latest_games }}"
