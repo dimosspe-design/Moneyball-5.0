@@ -1,4 +1,36 @@
-raise ValueError(f"fixtures.csv must contain {sorted(required)}")
+import argparse, zipfile, json, os, re, csv
+from pathlib import Path
+import numpy as np,pandas as pd
+from sklearn.pipeline import make_pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge,LogisticRegression
+from sklearn.metrics import mean_absolute_error,mean_squared_error,brier_score_loss
+from scipy.special import expit
+
+TEAM_CODES = {
+    "Dubai Basketball": "DUB", "Anadolu Efes": "EFS",
+    "Maccabi Tel Aviv": "MTA", "Olympiacos": "OLY",
+    "Zalgiris Kaunas": "ZAL", "Bayern Munich": "BAY",
+    "Fenerbahce": "FBT", "ASVEL": "ASV",
+    "Baskonia": "KBA", "Hapoel Tel Aviv": "HTA",
+    "Olimpia Milano": "MIL", "Crvena Zvezda": "CZV",
+    "Barcelona": "BAR", "Paris Basketball": "PAR",
+    "Partizan": "PBB", "Valencia Basket": "VBC",
+    "Virtus Bologna": "VIR", "Panathinaikos": "PAO",
+    "Besiktas": "BJK", "Real Madrid": "RMB",
+}
+
+def fixture_matchups(path, target_round, valid_codes):
+    """Strict, one-to-one next-round opponent/venue mapping from verified fixture CSV."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing fixtures CSV: {path}")
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        required = {"round", "home_team", "away_team"}
+        if not required.issubset(reader.fieldnames or []):
+            raise ValueError(f"fixtures.csv must contain {sorted(required)}")
         rows = list(reader)
     selected = [r for r in rows if str(r["round"]).strip().lstrip("Rr").strip() == str(target_round)]
     if not selected:
@@ -114,4 +146,3 @@ def main():
  with open(args.out+'/metrics.json','w') as f:json.dump(metrics,f,indent=2)
  print(json.dumps(metrics,indent=2));print(nextdf[nextdf.player.str.contains('Valanciunas|Diarra|Feliz|Mantzoukas|Malcolm|Payne|Brooks|Ward|Abalde|Herrera',case=False,regex=True)][['player','team','expected_fantasy_if_play','p_fantasy_ge_20_if_play']].to_string(index=False))
 if __name__=='__main__':main()
-  
