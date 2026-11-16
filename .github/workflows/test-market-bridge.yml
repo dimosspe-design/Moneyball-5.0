@@ -1,1 +1,114 @@
+name: Moneyball 5.0 - Test Market Bridge
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check required files
+        run: |
+          test -f euroleague.zip
+          test -f fixtures.csv
+          test -f model.py
+          test -f market_bridge.py
+          test -f verified_market_template.csv
+
+      - name: Generate R12 projections
+        run: |
+          python model.py \
+            --data euroleague.zip \
+            --out results
+
+      - name: Build Fantasy market candidates
+        run: |
+          python market_bridge.py \
+            --projections results/conditional_projections.csv \
+            --market verified_market_template.csv \
+            --output results/market_candidates.csv \
+            --report results/market_validation.json
+
+      - name: Validate market bridge output
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          projections_path = Path(
+              "results/conditional_projections.csv"
+          )
+          candidates_path = Path(
+              "results/market_candidates.csv"
+          )
+          report_path = Path(
+              "results/market_validation.json"
+          )
+
+          with projections_path.open(
+              newline="", encoding="utf-8-sig"
+          ) as f:
+              projections = list(csv.DictReader(f))
+
+          with candidates_path.open(
+              newline="", encoding="utf-8-sig"
+          ) as f:
+              candidates = list(csv.DictReader(f))
+
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
+
+          assert projections, "No projections found"
+          assert len(candidates) == len(projections), (
+              "Candidate count differs from projections"
+          )
+
+          assert report["generated_candidates"] == len(candidates)
+          assert report["transfers_executed"] is False
+
+          print("Projection players:", len(projections))
+          print("Market candidates:", len(candidates))
+          print(
+              "Fully verified candidates:",
+              report["fully_verified_candidates"]
+          )
+          print(
+              "Unverified candidates:",
+              report["unverified_candidates"]
+          )
+          print(
+              "Market completeness:",
+              report["global_market_completeness"]
+          )
+
+          print("SUCCESS: Market bridge generated candidates")
+          print("NO TRANSFERS EXECUTED")
+          PY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-market-bridge-test
+          path: results/
+          retention-days: 14
+          if-no-files-found: warn
