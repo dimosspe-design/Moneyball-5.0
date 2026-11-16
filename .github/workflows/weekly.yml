@@ -1,1 +1,45 @@
+name: Moneyball 5.0 weekly research
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check data availability
+        run: |
+          if [ ! -f data/euroleague.zip ]; then
+            echo "ERROR: Missing data/euroleague.zip"
+            exit 1
+          fi
+
+      - name: Run Moneyball 5.0
+        run: python weekly.py --data data/euroleague.zip --roster roster.csv --out results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-results
+          path: results/
+          if-no-files-found: warn
