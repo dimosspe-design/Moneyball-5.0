@@ -1,1 +1,78 @@
+name: Moneyball 5.0 - Matchday Projections
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  projections:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check Fantasy deadline
+        run: |
+          python matchday_schedule.py \
+            --schedule schedule.csv \
+            --hours-before 24 \
+            --out results/matchday_status.json
+
+      - name: Check whether projections are needed
+        id: deadline
+        shell: python
+        run: |
+          import json
+          import os
+
+          with open(
+              "results/matchday_status.json",
+              encoding="utf-8"
+          ) as f:
+              status = json.load(f)
+
+          prepare = (
+              status.get("status")
+              == "PREPARE_PROJECTIONS"
+          )
+
+          print("Matchday status:", status)
+          print("Prepare projections:", prepare)
+
+          with open(
+              os.environ["GITHUB_OUTPUT"], "a"
+          ) as f:
+              print(
+                  f"prepare={str(prepare).lower()}",
+                  file=f
+              )
+
+      - name: Run Moneyball 5.0
+        if: steps.deadline.outputs.prepare == 'true'
+        run: |
+          python weekly.py \
+            --data euroleague.zip \
+            --roster roster.csv \
+            --out results
+
+      - name: Upload projection results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-matchday-projections
+          path: results/
+          retention-days: 14
+          if-no-files-found: error
