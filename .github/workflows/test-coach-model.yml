@@ -1,1 +1,65 @@
+name: Moneyball 5.0 - Test Coach Model
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-coach-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test coach scoring model
+        run: |
+          python coach_model.py
+
+      - name: Validate coach model report
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("results/coach_model_test.json")
+
+          assert path.exists(), "Coach model report missing"
+
+          report = json.loads(
+              path.read_text(encoding="utf-8")
+          )
+
+          assert report["scoring_tests_passed"] == 12
+          assert abs(
+              report["example_expected_points"] - 8.2
+          ) < 1e-9
+
+          assert report["status"] == "SCORING_ENGINE_TESTED"
+          assert report["historical_probabilities_trained"] is False
+          assert report["coach_market_connected"] is False
+          assert report["transfers_executed"] is False
+
+          print("Scoring tests passed:", report["scoring_tests_passed"])
+          print("Example expected points:", report["example_expected_points"])
+          print("Status:", report["status"])
+          print("SUCCESS: Coach model validation passed")
+          print("NO TRANSFERS EXECUTED")
+          PY
+
+      - name: Upload coach model test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-coach-model-test
+          path: results/coach_model_test.json
+          retention-days: 14
+          if-no-files-found: warn
