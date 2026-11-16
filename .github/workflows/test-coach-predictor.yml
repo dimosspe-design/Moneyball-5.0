@@ -1,1 +1,137 @@
+name: Moneyball 5.0 - Test Coach Predictor
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-coach-predictor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check required files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "coach_predictor.py",
+              "coach_model.py",
+              "euroleague.zip",
+              "fixtures.csv",
+          ]
+
+          for filename in required:
+              path = Path(filename)
+              assert path.is_file(), f"Missing file: {filename}"
+              print(f"FOUND: {filename}")
+
+          print("SUCCESS: Required files exist")
+          PY
+
+      - name: Run coach predictor
+        run: |
+          python coach_predictor.py
+
+      - name: Validate coach projections
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          import math
+          from pathlib import Path
+
+          results = Path("results")
+
+          projections_path = results / "coach_projections_r12.csv"
+          backtest_path = results / "coach_backtest.csv"
+          report_path = results / "coach_predictor_report.json"
+
+          for path in [
+              projections_path,
+              backtest_path,
+              report_path,
+          ]:
+              assert path.is_file(), f"Missing output: {path}"
+
+          with projections_path.open(
+              newline="", encoding="utf-8-sig"
+          ) as f:
+              projections = list(csv.DictReader(f))
+
+          with backtest_path.open(
+              newline="", encoding="utf-8-sig"
+          ) as f:
+              backtest = list(csv.DictReader(f))
+
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
+
+          assert len(projections) == 20, (
+              f"Expected 20 team projections, got {len(projections)}"
+          )
+
+          assert len(backtest) > 0, "Backtest is empty"
+
+          teams = [row["team"] for row in projections]
+
+          assert len(set(teams)) == 20, (
+              "Duplicate teams in projections"
+          )
+
+          for row in projections:
+              probability = float(row["win_probability"])
+              expected = float(row["expected_coach_fantasy"])
+              margin = float(row["expected_margin"])
+
+              assert math.isfinite(probability)
+              assert math.isfinite(expected)
+              assert math.isfinite(margin)
+
+              assert 0 <= probability <= 1, (
+                  f"Invalid probability for {row['team']}"
+              )
+
+              assert -20 <= expected <= 25, (
+                  f"Invalid expected coach score for {row['team']}"
+              )
+
+          assert report["coach_projections"] == 20
+          assert report["backtest_games"] == len(backtest)
+          assert report["transfers_executed"] is False
+
+          print("Historical games:", report["historical_games"])
+          print("Latest historical round:", report["latest_historical_round"])
+          print("Coach projections:", len(projections))
+          print("Backtest games:", len(backtest))
+          print("Backtest margin MAE:", report["backtest_margin_mae"])
+          print("Zero-margin baseline MAE:", report["zero_margin_baseline_mae"])
+          print("Probabilities calibrated:", report["probabilities_calibrated"])
+
+          print("SUCCESS: Coach projections validated")
+          print("NO TRANSFERS EXECUTED")
+          PY
+
+      - name: Upload coach prediction results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-coach-projections-r12
+          path: |
+            results/coach_projections_r12.csv
+            results/coach_backtest.csv
+            results/coach_predictor_report.json
+          retention-days: 14
+          if-no-files-found: warn
