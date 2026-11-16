@@ -1,1 +1,96 @@
+name: Moneyball 5.0 - Test Market Bridge v5
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-bridge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check required files
+        run: |
+          test -f market_bridge_v5.py
+          test -f team_turns_r12.csv
+          test -f moneyball-public-market-with-coaches.zip
+          test -f moneyball-r12-projections.zip
+          test -f moneyball-coach-projections-r12.zip
+
+      - name: Inspect ZIP contents
+        run: |
+          python - <<'PY'
+          import zipfile
+
+          archives = [
+              "moneyball-public-market-with-coaches.zip",
+              "moneyball-r12-projections.zip",
+              "moneyball-coach-projections-r12.zip",
+          ]
+
+          for archive in archives:
+              print(f"\n{archive}")
+              with zipfile.ZipFile(archive) as z:
+                  for name in z.namelist():
+                      print(" -", name)
+          PY
+
+      - name: Run Market Bridge v5
+        run: |
+          python market_bridge_v5.py \
+            --players moneyball-public-market-with-coaches.zip \
+            --coaches moneyball-public-market-with-coaches.zip \
+            --projections moneyball-r12-projections.zip \
+            --coach-projections moneyball-coach-projections-r12.zip \
+            --turns team_turns_r12.csv \
+            --output results/market_candidates_v5.csv \
+            --report results/market_bridge_v5_report.json
+
+      - name: Validate bridge output
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+
+          with open("results/market_candidates_v5.csv", newline="") as f:
+              rows = list(csv.DictReader(f))
+
+          with open("results/market_bridge_v5_report.json") as f:
+              report = json.load(f)
+
+          assert rows, "Bridge produced no candidates"
+          assert report["transfers_executed"] is False
+          assert report["ready_for_optimizer"] is False
+
+          turns = {r["turn"] for r in rows}
+          print("Candidates:", len(rows))
+          print("Matched players:", report["matched_players"])
+          print("Matched coaches:", report["matched_coaches"])
+          print("Turns found:", sorted(turns))
+          print("Issues:", len(report["issues"]))
+
+          if not {"T1", "T2"}.issubset(turns):
+              print("WARNING: T1/T2 mapping is incomplete")
+
+          print("PASS: Bridge output generated safely")
+          PY
+
+      - name: Upload bridge report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moneyball-market-bridge-v5-report
+          path: |
+            results/market_candidates_v5.csv
+            results/market_bridge_v5_report.json
+          if-no-files-found: warn
