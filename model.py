@@ -1,11 +1,24 @@
-import argparse, zipfile, json, os, re
-import numpy as np,pandas as pd
-from sklearn.pipeline import make_pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge,LogisticRegression
-from sklearn.metrics import mean_absolute_error,mean_squared_error,brier_score_loss
-from scipy.special import expit
+raise ValueError(f"fixtures.csv must contain {sorted(required)}")
+        rows = list(reader)
+    selected = [r for r in rows if str(r["round"]).strip().lstrip("Rr").strip() == str(target_round)]
+    if not selected:
+        raise ValueError(f"No fixtures for round {target_round} in {path}")
+    matchups = {}
+    for row in selected:
+        home_name, away_name = row["home_team"].strip(), row["away_team"].strip()
+        if home_name not in TEAM_CODES or away_name not in TEAM_CODES:
+            raise ValueError(f"Unknown fixture team: {home_name} / {away_name}")
+        home, away = TEAM_CODES[home_name], TEAM_CODES[away_name]
+        if home == away or home in matchups or away in matchups:
+            raise ValueError(f"Duplicate or invalid fixture: {home_name} / {away_name}")
+        matchups[home] = (away, 1)
+        matchups[away] = (home, 0)
+    if set(matchups) != set(TEAM_CODES.values()):
+        raise ValueError(f"Round {target_round}: expected all 20 teams; found {len(matchups)}")
+    missing = set(matchups) - set(valid_codes)
+    if missing:
+        raise ValueError(f"Fixture codes absent from historical dataset: {sorted(missing)}")
+    return matchups
 
 def fantasy(pir,won):
     # Bonus on absolute PIR in wins; ambiguous negative-PIR handling should be verified in-app
@@ -39,8 +52,11 @@ def make_features(p,g,t):
 cols=['n','mean5','mean3','mean_all','sd5','minutes5','minutes3','opponent_allowed_pir','opp_pace','team_pace','team_win5','home']
 
 def main():
- ap=argparse.ArgumentParser();ap.add_argument('--data',required=True);ap.add_argument('--out',required=True);args=ap.parse_args();os.makedirs(args.out,exist_ok=True)
+ ap=argparse.ArgumentParser();ap.add_argument('--data',required=True);ap.add_argument('--out',required=True);ap.add_argument('--fixtures',default='fixtures.csv');args=ap.parse_args();os.makedirs(args.out,exist_ok=True)
  z=zipfile.ZipFile(args.data);p=load(z,'player_box');g=load(z,'games');t=load(z,'team_games')
+ target_round=int(g['round'].max())+1
+ matches=fixture_matchups(args.fixtures,target_round,set(t['team'].dropna().unique()))
+ print(f'Using validated fixtures for round {target_round}: {len(matches)} teams')
  # detect missing / duplicated data
  assert not p.duplicated(['game_id','player_id']).any()
  assert len(g)==len(g.game_id.unique())
@@ -56,7 +72,7 @@ def main():
  bt=pd.concat(oof,ignore_index=True)
  # calibrate probabilities on rounds 5-8 only; assess on rounds 9-11 (chronologically later)
  fit=bt[bt['round']<=8];valid=bt[bt['round']>=9]
- calibrators={};metrics={'dataset_games':len(g),'dataset_player_games':len(p),'oof_n':len(bt),'oof_mae':float(mean_absolute_error(bt.actual,bt.pred)),'oof_rmse':float(np.sqrt(mean_squared_error(bt.actual,bt.pred))),'holdout_rounds':'9-11','holdout_n':len(valid),'holdout_mae':float(mean_absolute_error(valid.actual,valid.pred)),'scoring':'PIR + 0.10*abs(PIR) if win; verify negative-PIR bonus with app','conditional':'Only actual box-score participants, no probability of availability'}
+ calibrators={};metrics={'projection_round':target_round,'fixtures_source':str(args.fixtures),'fixture_teams_mapped':len(matches),'dataset_games':len(g),'dataset_player_games':len(p),'oof_n':len(bt),'oof_mae':float(mean_absolute_error(bt.actual,bt.pred)),'oof_rmse':float(np.sqrt(mean_squared_error(bt.actual,bt.pred))),'holdout_rounds':'9-11','holdout_n':len(valid),'holdout_mae':float(mean_absolute_error(valid.actual,valid.pred)),'scoring':'PIR + 0.10*abs(PIR) if win; verify negative-PIR bonus with app','conditional':'Only actual box-score participants, no probability of availability'}
  for threshold in (15,20,25):
   y=(fit.actual>=threshold).astype(int);logit=LogisticRegression(C=1.,max_iter=1000)
   logit.fit(fit[['pred']],y);calibrators[threshold]=logit
@@ -76,8 +92,6 @@ def main():
   if len(h)<2:continue
   hf=fantasy(h.pir,h.won);rf=fantasy(recent.pir,recent.won)
   opponent=None;home=None
-  # matches shown in user's screenshot; others lack verified R12 opponent
-  matches={'ZAL':('BAY',1),'VIR':('PAO',1),'EFS':('DUB',0),'VBC':('PAR',0),'OLY':('MTA',0),'RMB':('BJK',0),'PBB':('BAR',0),'PAO':('VIR',0)}
   if last.team in matches:opponent,home=matches[last.team]
   opp=team_hist[team_hist.team==opponent].tail(5) if opponent else pd.DataFrame()
   own=team_hist[team_hist.team==last.team].tail(5)
@@ -95,7 +109,9 @@ def main():
  nextdf['floor_p10_approx']=nextdf.expected_fantasy_if_play+residual.quantile(.1)
  nextdf['upside_p90_approx']=nextdf.expected_fantasy_if_play+residual.quantile(.9)
  nextdf['availability']='NOT VALIDATED — conditional on playing'
+ nextdf['projection_round']=target_round
  nextdf.sort_values('expected_fantasy_if_play',ascending=False).to_csv(args.out+'/conditional_projections.csv',index=False)
  with open(args.out+'/metrics.json','w') as f:json.dump(metrics,f,indent=2)
  print(json.dumps(metrics,indent=2));print(nextdf[nextdf.player.str.contains('Valanciunas|Diarra|Feliz|Mantzoukas|Malcolm|Payne|Brooks|Ward|Abalde|Herrera',case=False,regex=True)][['player','team','expected_fantasy_if_play','p_fantasy_ge_20_if_play']].to_string(index=False))
 if __name__=='__main__':main()
+  
