@@ -23,8 +23,8 @@ jobs:
         run: |
           test -f market_bridge_v5.py
           test -f team_turns_r12.csv
-          test -f moneyball-public-market-with-coaches.zip
-          test -f moneyball-r12-projections.zip
+          test -f "moneyball-public-market-with-coaches (1).zip"
+          test -f "moneyball-r12-projections (2).zip"
           test -f moneyball-coach-projections-r12.zip
 
       - name: Inspect ZIP contents
