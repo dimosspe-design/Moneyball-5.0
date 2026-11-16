@@ -21,11 +21,29 @@ jobs:
 
       - name: Check required files
         run: |
-          test -f market_bridge_v5.py
-          test -f team_turns_r12.csv
-          test -f "moneyball-public-market-with-coaches (1).zip"
-          test -f "moneyball-r12-projections (2).zip"
-          test -f moneyball-coach-projections-r12.zip
+          python - <<'PY'
+          from pathlib import Path
+
+          required = [
+              "market_bridge_v5.py",
+              "team_turns_r12.csv",
+              "moneyball-public-market-with-coaches (1).zip",
+              "moneyball-r12-projections (2).zip",
+              "moneyball-coach-projections-r12.zip",
+          ]
+
+          missing = [
+              name for name in required
+              if not Path(name).is_file()
+          ]
+
+          if missing:
+              raise SystemExit(
+                  "Missing required files: " + ", ".join(missing)
+              )
+
+          print("PASS: All required files found")
+          PY
 
       - name: Inspect ZIP contents
         run: |
@@ -33,25 +51,28 @@ jobs:
           import zipfile
 
           archives = [
-              "moneyball-public-market-with-coaches.zip",
-              "moneyball-r12-projections.zip",
+              "moneyball-public-market-with-coaches (1).zip",
+              "moneyball-r12-projections (2).zip",
               "moneyball-coach-projections-r12.zip",
           ]
 
           for archive in archives:
-              print(f"\n{archive}")
+              print(f"\nZIP: {archive}")
+
               with zipfile.ZipFile(archive) as z:
                   for name in z.namelist():
                       print(" -", name)
+
+          print("\nPASS: ZIP files opened successfully")
           PY
 
       - name: Run Market Bridge v5
         run: |
           python market_bridge_v5.py \
-            --players moneyball-public-market-with-coaches.zip \
-            --coaches moneyball-public-market-with-coaches.zip \
-            --projections moneyball-r12-projections.zip \
-            --coach-projections moneyball-coach-projections-r12.zip \
+            --players "moneyball-public-market-with-coaches (1).zip" \
+            --coaches "moneyball-public-market-with-coaches (1).zip" \
+            --projections "moneyball-r12-projections (2).zip" \
+            --coach-projections "moneyball-coach-projections-r12.zip" \
             --turns team_turns_r12.csv \
             --output results/market_candidates_v5.csv \
             --report results/market_bridge_v5_report.json
@@ -62,10 +83,17 @@ jobs:
           import csv
           import json
 
-          with open("results/market_candidates_v5.csv", newline="") as f:
+          with open(
+              "results/market_candidates_v5.csv",
+              newline="",
+              encoding="utf-8"
+          ) as f:
               rows = list(csv.DictReader(f))
 
-          with open("results/market_bridge_v5_report.json") as f:
+          with open(
+              "results/market_bridge_v5_report.json",
+              encoding="utf-8"
+          ) as f:
               report = json.load(f)
 
           assert rows, "Bridge produced no candidates"
@@ -73,6 +101,7 @@ jobs:
           assert report["ready_for_optimizer"] is False
 
           turns = {r["turn"] for r in rows}
+
           print("Candidates:", len(rows))
           print("Matched players:", report["matched_players"])
           print("Matched coaches:", report["matched_coaches"])
