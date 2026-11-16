@@ -1,11 +1,14 @@
 """
 Moneyball 5.0 — Public Fantasy Market Collector
 
-Reads the public player table from Fantasy Edge IQ.
+Collects player and coach prices from a public HTML table.
 
-Outputs an unverified market snapshot.
-Does not modify verified market data.
-Does not log in or execute transfers.
+Outputs:
+- results/public_market_snapshot.csv
+- results/public_coaches_snapshot.csv
+- results/public_market_report.json
+
+No login. No transfers. No modification of verified data.
 """
 
 import csv
@@ -20,25 +23,24 @@ from bs4 import BeautifulSoup
 
 URL = "https://www.fantasyedgeiq.com/euroleague/players"
 
-OUTPUT_CSV = Path("results/public_market_snapshot.csv")
-OUTPUT_REPORT = Path("results/public_market_report.json")
+RESULTS = Path("results")
+PLAYERS_CSV = RESULTS / "public_market_snapshot.csv"
+COACHES_CSV = RESULTS / "public_coaches_snapshot.csv"
+REPORT_JSON = RESULTS / "public_market_report.json"
 
-EXPECTED_HEADERS = [
-    "Player",
-    "Team",
-    "Pos",
-    "Price",
-    "MIN/G",
-    "PIR/G",
-    "Proj PIR",
-]
+EXPECTED_HEADERS = ["Player", "Team", "Pos", "Price"]
 
 
 def parse_price(value):
-    value = value.strip().replace(",", ".")
-    value = value.replace("CR", "").replace("€", "").strip()
+    cleaned = (
+        value.strip()
+        .replace(",", ".")
+        .replace("CR", "")
+        .replace("€", "")
+        .strip()
+    )
 
-    number = float(value)
+    number = float(cleaned)
 
     if not math.isfinite(number) or number <= 0:
         raise ValueError(f"Invalid price: {value}")
@@ -46,14 +48,21 @@ def parse_price(value):
     return number
 
 
+def write_csv(path, rows, fields):
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main():
-    OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    RESULTS.mkdir(parents=True, exist_ok=True)
 
     response = requests.get(
         URL,
         timeout=30,
         headers={
-            "User-Agent": "Moneyball5-PublicMarketCollector/1.0"
+            "User-Agent": "Moneyball5-PublicMarketCollector/1.1"
         },
     )
     response.raise_for_status()
@@ -68,7 +77,7 @@ def main():
             for th in table.find_all("th")
         ]
 
-        if headers[:4] == EXPECTED_HEADERS[:4]:
+        if headers[:4] == EXPECTED_HEADERS:
             matching_table = table
             break
 
@@ -77,7 +86,8 @@ def main():
             "No table with Player/Team/Pos/Price headers found"
         )
 
-    rows = []
+    players = []
+    coaches = []
     issues = []
     seen = set()
 
@@ -93,17 +103,21 @@ def main():
         if len(cells) < 4:
             continue
 
-        player, team, position, price_text = cells[:4]
+        name, team, position, price_text = cells[:4]
 
-        if not player:
-            issues.append(f"Row {index}: missing player")
+        if not name:
+            issues.append(f"Row {index}: missing name")
             continue
 
-        if player.casefold() in seen:
-            issues.append(f"Row {index}: duplicate {player}")
+        key = (name.casefold(), team.casefold())
+
+        if key in seen:
+            issues.append(
+                f"Row {index}: duplicate {name} ({team})"
+            )
             continue
 
-        if position not in {"G", "F", "C"}:
+        if position not in {"G", "F", "C", "HC"}:
             issues.append(
                 f"Row {index}: invalid position {position}"
             )
@@ -117,47 +131,52 @@ def main():
             )
             continue
 
-        seen.add(player.casefold())
+        seen.add(key)
 
-        rows.append({
-            "player": player,
+        row = {
+            "player": name,
             "team": team,
             "position": position,
             "credit": price,
             "source": "Fantasy Edge IQ",
             "verified_price": "false",
-        })
+        }
 
-    if not rows:
+        if position == "HC":
+            coaches.append(row)
+        else:
+            players.append(row)
+
+    if not players:
         raise SystemExit("No valid player rows extracted")
 
-    with OUTPUT_CSV.open(
-        "w", newline="", encoding="utf-8"
-    ) as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "player",
-                "team",
-                "position",
-                "credit",
-                "source",
-                "verified_price",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(rows)
+    if not coaches:
+        raise SystemExit("No coach rows extracted")
+
+    fields = [
+        "player",
+        "team",
+        "position",
+        "credit",
+        "source",
+        "verified_price",
+    ]
+
+    write_csv(PLAYERS_CSV, players, fields)
+    write_csv(COACHES_CSV, coaches, fields)
 
     report = {
         "source": URL,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "players_extracted": len(rows),
+        "players_extracted": len(players),
+        "coaches_extracted": len(coaches),
         "issues": issues,
         "official_fantasy_market_verified": False,
+        "coach_projections_available": False,
         "transfers_executed": False,
     }
 
-    OUTPUT_REPORT.write_text(
+    REPORT_JSON.write_text(
         json.dumps(
             report,
             indent=2,
@@ -167,7 +186,9 @@ def main():
     )
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    print("\nSUCCESS: Public market snapshot created")
+
+    print("\nSUCCESS: Players and coaches extracted")
+    print("NOTE: Prices are not officially verified")
     print("NO TRANSFERS EXECUTED")
 
 
