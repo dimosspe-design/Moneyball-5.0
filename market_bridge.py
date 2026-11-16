@@ -1,31 +1,273 @@
-"""Validate Fantasy market CSV and emit v3 optimizer-ready CSV; no web login or transfers."""
-import argparse, csv, json
+"""
+Moneyball 5.0 — Fantasy Market Bridge
+
+Builds a market CSV from model projections.
+
+IMPORTANT:
+- Does NOT invent Fantasy prices or positions.
+- Does NOT mark availability as confirmed.
+- Does NOT execute transfers.
+- Requires independently verified market data
+  before optimization.
+"""
+
+import argparse
+import csv
+import json
+import math
 from pathlib import Path
-REQUIRED={'player','credit','position','turn','expected_fantasy_if_play','upside_p90_approx','availability','verified_price','verified_matchup'}
+
+
+FIELDS = [
+    "player",
+    "credit",
+    "position",
+    "turn",
+    "expected_fantasy_if_play",
+    "upside_p90_approx",
+    "availability",
+    "verified_price",
+    "verified_matchup",
+]
+
+POSITIONS = {"G", "F", "C"}
+TURNS = {"T1", "T2", "T3"}
+
+
+def read_csv(path):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+
+
+def write_csv(path, rows):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def is_valid_number(value, positive=False):
+    try:
+        number = float(value)
+        return math.isfinite(number) and (
+            not positive or number > 0
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def main():
- p=argparse.ArgumentParser();p.add_argument('--input',required=True);p.add_argument('--output',required=True);p.add_argument('--report',required=True);a=p.parse_args()
- with open(a.input,encoding='utf-8-sig',newline='') as f:
-  reader=csv.DictReader(f);headers=set(reader.fieldnames or []);missing=REQUIRED-headers
-  if missing:raise SystemExit('Missing columns: '+', '.join(sorted(missing)))
-  rows=list(reader)
- problems=[];seen=set()
- for i,r in enumerate(rows,2):
-  name=r['player'].strip()
-  if not name or name in seen:problems.append(f'row {i}: missing/duplicate player')
-  seen.add(name)
-  if r['position'] not in {'C','F','G'}:problems.append(f'row {i}: invalid position')
-  if r['turn'] not in {'T1','T2','T3'}:problems.append(f'row {i}: invalid turn')
-  if r['availability'] not in {'confirmed','uncertain'}:problems.append(f'row {i}: availability not verified')
-  if r['verified_price'].lower()!='true' or r['verified_matchup'].lower()!='true':problems.append(f'row {i}: price/matchup unverified')
-  for col in ('credit','expected_fantasy_if_play','upside_p90_approx'):
-   try:
-    v=float(r[col]);assert v==v
-    if col=='credit' and v<=0:raise ValueError()
-   except (ValueError,AssertionError):problems.append(f'row {i}: invalid {col}')
- report={'rows':len(rows),'status':'validated_rows_only' if not problems else 'blocked','issues':problems,'global_market_completeness':'NOT VERIFIED','coach_optimization':'NOT IMPLEMENTED','t1_t2_option_value':'NOT IMPLEMENTED','source_authentication':'MANUAL VERIFIED INPUT REQUIRED'}
- Path(a.report).write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
- if problems:raise SystemExit(f'Validation failed: {len(problems)} issues. See {a.report}')
- with open(a.output,'w',newline='',encoding='utf-8') as f:
-  w=csv.DictWriter(f,fieldnames=list(reader.fieldnames));w.writeheader();w.writerows(rows)
- print('Validated input, but market completeness still needs independent confirmation.')
-if __name__=='__main__':main()
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--projections",
+        default="results/conditional_projections.csv",
+    )
+
+    parser.add_argument(
+        "--market",
+        default="verified_market_template.csv",
+    )
+
+    parser.add_argument(
+        "--output",
+        default="results/market_candidates.csv",
+    )
+
+    parser.add_argument(
+        "--report",
+        default="results/market_validation.json",
+    )
+
+    args = parser.parse_args()
+
+    projections_path = Path(args.projections)
+    market_path = Path(args.market)
+
+    if not projections_path.exists():
+        raise SystemExit(
+            f"Missing projections: {projections_path}"
+        )
+
+    projections = read_csv(projections_path)
+
+    if not projections:
+        raise SystemExit("Projection CSV is empty")
+
+    required_projection_columns = {
+        "player",
+        "expected_fantasy_if_play",
+        "upside_p90_approx",
+    }
+
+    with open(
+        projections_path,
+        newline="",
+        encoding="utf-8-sig",
+    ) as f:
+        projection_headers = set(
+            csv.DictReader(f).fieldnames or []
+        )
+
+    missing = required_projection_columns - projection_headers
+
+    if missing:
+        raise SystemExit(
+            "Missing projection columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    market_rows = []
+
+    if market_path.exists():
+        market_rows = read_csv(market_path)
+
+    market_by_player = {}
+
+    for row in market_rows:
+        name = row.get("player", "").strip().casefold()
+
+        if not name:
+            continue
+
+        if name in market_by_player:
+            raise SystemExit(
+                f"Duplicate market player: {name}"
+            )
+
+        market_by_player[name] = row
+
+    output_rows = []
+    problems = []
+    verified_count = 0
+
+    for projection in projections:
+        player = projection["player"].strip()
+
+        if not player:
+            problems.append("Projection with missing player name")
+            continue
+
+        market = market_by_player.get(
+            player.casefold(),
+            {},
+        )
+
+        credit = market.get("credit", "").strip()
+        position = market.get("position", "").strip().upper()
+        turn = market.get("turn", "").strip().upper()
+
+        availability = market.get(
+            "availability", "uncertain"
+        ).strip().lower()
+
+        verified_price = market.get(
+            "verified_price", "false"
+        ).strip().lower()
+
+        verified_matchup = market.get(
+            "verified_matchup", "false"
+        ).strip().lower()
+
+        if availability not in {"confirmed", "uncertain"}:
+            availability = "uncertain"
+
+        # A matchup in the model is not independent
+        # verification of the Fantasy schedule.
+        if verified_matchup != "true":
+            verified_matchup = "false"
+
+        if verified_price != "true":
+            verified_price = "false"
+
+        row = {
+            "player": player,
+            "credit": credit,
+            "position": position,
+            "turn": turn,
+            "expected_fantasy_if_play": projection[
+                "expected_fantasy_if_play"
+            ],
+            "upside_p90_approx": projection[
+                "upside_p90_approx"
+            ],
+            "availability": availability,
+            "verified_price": verified_price,
+            "verified_matchup": verified_matchup,
+        }
+
+        output_rows.append(row)
+
+        valid = (
+            is_valid_number(credit, positive=True)
+            and position in POSITIONS
+            and turn in TURNS
+            and availability == "confirmed"
+            and verified_price == "true"
+            and verified_matchup == "true"
+            and is_valid_number(
+                row["expected_fantasy_if_play"]
+            )
+            and is_valid_number(
+                row["upside_p90_approx"]
+            )
+        )
+
+        if valid:
+            verified_count += 1
+
+    if not output_rows:
+        raise SystemExit("No market candidates generated")
+
+    write_csv(args.output, output_rows)
+
+    report = {
+        "projection_players": len(projections),
+        "market_rows_supplied": len(market_rows),
+        "generated_candidates": len(output_rows),
+        "fully_verified_candidates": verified_count,
+        "unverified_candidates": (
+            len(output_rows) - verified_count
+        ),
+        "global_market_completeness": "NOT VERIFIED",
+        "coach_optimization": "NOT IMPLEMENTED",
+        "availability_model": "NOT IMPLEMENTED",
+        "transfers_executed": False,
+        "optimization_ready": False,
+        "notes": [
+            "Player names must match between the two CSV files.",
+            "Prices and positions require external verification.",
+            "A confirmed appearance is not guaranteed.",
+            "The model projections are conditional on playing.",
+            "Full-market optimization remains blocked "
+            "until market completeness is verified.",
+        ],
+        "issues": problems,
+    }
+
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    report_path.write_text(
+        json.dumps(
+            report,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+    print(
+        "\nSUCCESS: Market candidates generated."
+        "\nNOTE: This is NOT a verified complete Fantasy market."
+    )
+
+
+if __name__ == "__main__":
+    main()
